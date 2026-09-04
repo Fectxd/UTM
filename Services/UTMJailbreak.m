@@ -53,8 +53,8 @@ struct cs_entitlements {
     char entitlements[];
 };
 
-#define MEMLIMIT_GIB (1024) // note this is 1TiB of RAM which iOS devices should not pass anytime soon...
 #define MEMORYSTATUS_CMD_SET_MEMLIMIT_PROPERTIES (7)
+#define MEMORYSTATUS_CMD_GET_MEMLIMIT_PROPERTIES (8)
 
 typedef struct memorystatus_memlimit_properties {
     int32_t memlimit_active;
@@ -379,12 +379,50 @@ bool jb_enable_ptrace_hack(void) {
 }
 
 bool jb_increase_memlimit(void) {
+    // Ported from VirtualMacOniPad (vz/host/vmmhook.m,
+    // configure_vmm_memory_policy + vz/patches/vmm.ents.xml):
+    // the `increased-memory-limit` entitlement alone leaves this process with
+    // only a ~5 GiB non-fatal high-water mark on iPadOS. On iOS, UTM's QEMU
+    // runs inside this same process (dlopen in UTMProcess), so a 4 GiB+ guest
+    // plus QEMU overhead lands straight on that watermark and the app gets
+    // jetsammed / wedges under pressure. Raise our own jetsam memlimit to
+    // 2x physical RAM (hw.memsize >> 19, in MiB) — the exact value Virtual
+    // Mac sets on the same hardware, which its issue #2 confirmed as
+    // "did not get jetsamed" with a 6 GiB guest on an 8 GiB device.
+    // Requires the com.apple.private.memorystatus entitlement (already
+    // present in the packaged UTM-HV.ipa entitlements) to succeed.
+    uint64_t physicalBytes = 0;
+    size_t physicalSize = sizeof(physicalBytes);
+    if (sysctlbyname("hw.memsize", &physicalBytes, &physicalSize, NULL, 0) != 0 ||
+        physicalBytes < (1ULL << 30)) {
+        NSLog(@"MEM: jb_increase_memlimit: hw.memsize failed errno=%d", errno);
+        return false;
+    }
+    uint64_t limitMiB = physicalBytes >> 19; // 2x physical RAM, in MiB
+    if (limitMiB > INT32_MAX) {
+        limitMiB = INT32_MAX;
+    }
+
     memorystatus_memlimit_properties_t prop = {0};
-    int ret1 = 0, ret2 = 0;
-    prop.memlimit_active = 1024 * MEMLIMIT_GIB;
-    prop.memlimit_inactive = 1024 * MEMLIMIT_GIB;
-    ret1 = memorystatus_control(MEMORYSTATUS_CMD_SET_MEMLIMIT_PROPERTIES, getpid(), 0, (uintptr_t)&prop, sizeof(prop));
-    return ret1 == 0 && ret2 == 0;
+    prop.memlimit_active = (int32_t)limitMiB;
+    prop.memlimit_inactive = (int32_t)limitMiB;
+    errno = 0;
+    int setResult = memorystatus_control(MEMORYSTATUS_CMD_SET_MEMLIMIT_PROPERTIES,
+                                         getpid(), 0, (uintptr_t)&prop, sizeof(prop));
+    int setError = errno;
+
+    // Read back what the kernel actually accepted (diagnostics only).
+    memorystatus_memlimit_properties_t actual = {0};
+    errno = 0;
+    int getResult = memorystatus_control(MEMORYSTATUS_CMD_GET_MEMLIMIT_PROPERTIES,
+                                         getpid(), 0, (uintptr_t)&actual, sizeof(actual));
+    int getError = errno;
+    NSLog(@"MEM: jb_increase_memlimit: request=%llu MiB set=%d/%d get=%d/%d "
+          @"active=%d/0x%x inactive=%d/0x%x",
+          limitMiB, setResult, setError, getResult, getError,
+          actual.memlimit_active, actual.memlimit_active_attr,
+          actual.memlimit_inactive, actual.memlimit_inactive_attr);
+    return setResult == 0;
 }
 
 #if !TARGET_OS_OSX && defined(WITH_JIT)
