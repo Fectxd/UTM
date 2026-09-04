@@ -21,29 +21,9 @@ env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 60
 
 jobs:
-  configuration:
-    name: Setup configuration
-    runs-on: ubuntu-latest
-    outputs:
-      runner: ${{ steps.checker.outputs.runners }}
-      github-runner: ${{ steps.checker.outputs.github-runner }}
-    steps:
-    - name: Check for hosted runners
-      id: checker
-      shell: bash
-      env:
-        IS_SELF_HOSTED_RUNNER: ${{ vars.IS_SELF_HOSTED_RUNNER || (github.repository_owner == 'utmapp' && 'true') }}
-      run: |
-        echo "github-runner='$RUNNER_IMAGE'" >> $GITHUB_OUTPUT
-        if [ "$IS_SELF_HOSTED_RUNNER" == "true" ]; then
-          echo "runners=['self-hosted', 'macOS']" >> $GITHUB_OUTPUT
-        else
-          echo "runners='$RUNNER_IMAGE'" >> $GITHUB_OUTPUT
-        fi
   build-sysroot:
     name: Build Sysroot (iOS)
-    runs-on: ${{ fromJSON(needs.configuration.outputs.runner) }}
-    needs: configuration
+    runs-on: macos-15
     strategy:
       matrix:
         arch: [arm64]
@@ -64,13 +44,12 @@ jobs:
           path: ./sysroot-${{ matrix.platform }}-${{ matrix.arch }}
           key: ${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('scripts/build_dependencies.sh') }}-${{ hashFiles('patches/**') }}-${{ github.sha }}
           restore-keys: ${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('scripts/build_dependencies.sh') }}-${{ hashFiles('patches/**') }}
-          lookup-only: github.event_name != 'release' && github.event.inputs.test_release != 'true'
       - name: Setup Path
         shell: bash
         run: |
           echo "/usr/local/opt/bison/bin:/opt/homebrew/opt/bison/bin" >> $GITHUB_PATH
       - name: Install Requirements
-        if: (steps.cache-sysroot.outputs.cache-matched-key == '' || github.event.inputs.rebuild_sysroot == 'true') && needs.configuration.outputs.runner == env.RUNNER_IMAGE
+        if: steps.cache-sysroot.outputs.cache-matched-key == ''
         run: |
           brew uninstall cmake
           brew install bison pkg-config gettext glib-utils libgpg-error nasm make meson cmake
@@ -79,19 +58,19 @@ jobs:
           gem install --user-install xcpretty
           rm -f /usr/local/lib/pkgconfig/*.pc
       - name: Build Sysroot
-        if: steps.cache-sysroot.outputs.cache-matched-key == '' || github.event.inputs.rebuild_sysroot == 'true'
+        if: steps.cache-sysroot.outputs.cache-matched-key == ''
         run: ./scripts/build_dependencies.sh -p ${{ matrix.platform }} -a ${{ matrix.arch }}
       - name: Save Cache
         if: steps.cache-sysroot.outputs.cache-matched-key == ''
         uses: actions/cache/save@v4
         with:
           path: ./sysroot-${{ matrix.platform }}-${{ matrix.arch }}
-          key: ${{ steps.cache-sysroot.outputs.cache-primary-key }}
+          key: ${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('scripts/build_dependencies.sh') }}-${{ hashFiles('patches/**') }}-${{ github.sha }}
           upload-chunk-size: 1048576 # 1 MiB
   build-utm:
     name: Build UTM (iOS)
-    runs-on: ${{ fromJSON(needs.configuration.outputs.runner) }}
-    needs: [configuration, build-sysroot]
+    runs-on: macos-15
+    needs: build-sysroot
     strategy:
       matrix:
         configuration: [
@@ -107,7 +86,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ./sysroot-${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}
-          key: ${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}-${{ hashFiles('scripts/build_dependencies.sh') }}-${{ hashFiles('patches/**') }}
+          key: ${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}-${{ hashFiles('scripts/build_dependencies.sh') }}-${{ hashFiles('patches/**') }}-${{ github.sha }}
+          restore-keys: ${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}-${{ hashFiles('scripts/build_dependencies.sh') }}-${{ hashFiles('patches/**') }}
           fail-on-cache-miss: true
       - name: Setup Xcode
         shell: bash
@@ -124,8 +104,8 @@ jobs:
           path: UTM.xcarchive.tgz
   package-ios:
     name: Package (iOS, ipa-hv)
-    runs-on: ${{ fromJSON(needs.configuration.outputs.github-runner) }}
-    needs: [configuration, build-utm]
+    runs-on: macos-15
+    needs: build-utm
     if: github.event_name == 'release' || github.event.inputs.test_release == 'true'
     steps:
       - name: Checkout
