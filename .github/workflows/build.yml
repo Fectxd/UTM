@@ -59,7 +59,13 @@ jobs:
           rm -f /usr/local/lib/pkgconfig/*.pc
       - name: Build Sysroot
         if: steps.cache-sysroot.outputs.cache-matched-key == ''
-        run: ./scripts/build_dependencies.sh -p ${{ matrix.platform }} -a ${{ matrix.arch }}
+        run: |
+          if ! ./scripts/build_dependencies.sh -p ${{ matrix.platform }} -a ${{ matrix.arch }} > /tmp/sysroot-build.log 2>&1; then
+            echo "==== last 200 lines of build_dependencies.sh output ===="
+            tail -200 /tmp/sysroot-build.log
+            echo "===="
+            exit 1
+          fi
       - name: Save Cache
         if: steps.cache-sysroot.outputs.cache-matched-key == ''
         uses: actions/cache/save@v4
