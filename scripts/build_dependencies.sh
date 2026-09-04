@@ -852,27 +852,16 @@ build_moltenvk() {
 }
 
 
-# Host mesa (mesa_clc) compiles against the Homebrew LLVM that happens to be
-# installed. Newer LLVM (>= 20) moved clang::driver::Driver::GetResourcesPath
-# to a free clang::GetResourcesPath function, and clang headers gained an
-# OffloadArch enumerator named UNUSED that collides with mesa's UNUSED macro.
-# Apply minimal, idempotent source fixes so the build works on any LLVM major.
+# Host mesa (mesa_clc) is built with whatever Homebrew LLVM is installed.
+# The pinned mesa commit predates LLVM >= 20 (Driver::GetResourcesPath moved
+# out of clang::driver::Driver; clang headers gained an OffloadArch enumerator
+# named UNUSED that clashes with mesa's UNUSED macro). patch-mesa-host.py
+# applies the minimal fixes, idempotently.
 patch_mesa_host() {
     MESA_TREE="$BUILD_DIR/mesa.git"
     [ -d "$MESA_TREE" ] || { echo "${RED}patch_mesa_host: mesa.git missing${NC}"; exit 1; }
-
-    if grep -rl 'Driver::GetResourcesPath' "$MESA_TREE/src" >/dev/null 2>&1; then
-        echo "${GREEN}Patching mesa for LLVM>=20: Driver::GetResourcesPath -> clang::GetResourcesPath${NC}"
-        find "$MESA_TREE/src" -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' \) \
-            -exec sed -i '' 's/Driver::GetResourcesPath/clang::GetResourcesPath/g' {} \;
-    fi
-
-    if grep -q '^#define UNUSED ' "$MESA_TREE/src/util/macros.h"; then
-        echo "${GREEN}Patching mesa: rename UNUSED macro to MESA_UNUSED${NC}"
-        find "$MESA_TREE/src" "$MESA_TREE/include" -type f \
-            \( -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.h' -o -name '*.hpp' \) \
-            -exec sed -i '' 's/[[:<:]]UNUSED[[:>:]]/MESA_UNUSED/g' {} \;
-    fi
+    echo "${GREEN}Patching mesa for LLVM>=20 compatibility...${NC}"
+    python3 "$BASEDIR/patch-mesa-host.py" "$MESA_TREE" || { echo "${RED}patch_mesa_host failed${NC}"; exit 1; }
 }
 
 build_mesa_host () {
