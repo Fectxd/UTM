@@ -168,7 +168,7 @@ clone () {
         fi
     fi
     # tree:0 filtered clones fetch missing objects here, so these hit the network too
-    retry git -C "$DIR" checkout "$COMMIT"
+    retry git -C "$DIR" checkout -f "$COMMIT"
     retry git -C "$DIR" submodule update --init --recursive --filter=tree:0
 }
 
@@ -851,6 +851,30 @@ build_moltenvk() {
     popd
 }
 
+
+# Host mesa (mesa_clc) compiles against the Homebrew LLVM that happens to be
+# installed. Newer LLVM (>= 20) moved clang::driver::Driver::GetResourcesPath
+# to a free clang::GetResourcesPath function, and clang headers gained an
+# OffloadArch enumerator named UNUSED that collides with mesa's UNUSED macro.
+# Apply minimal, idempotent source fixes so the build works on any LLVM major.
+patch_mesa_host() {
+    MESA_TREE="$BUILD_DIR/mesa.git"
+    [ -d "$MESA_TREE" ] || { echo "${RED}patch_mesa_host: mesa.git missing${NC}"; exit 1; }
+
+    if grep -rl 'Driver::GetResourcesPath' "$MESA_TREE/src" >/dev/null 2>&1; then
+        echo "${GREEN}Patching mesa for LLVM>=20: Driver::GetResourcesPath -> clang::GetResourcesPath${NC}"
+        find "$MESA_TREE/src" -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' \) \
+            -exec sed -i '' 's/Driver::GetResourcesPath/clang::GetResourcesPath/g' {} \;
+    fi
+
+    if grep -q '^#define UNUSED ' "$MESA_TREE/src/util/macros.h"; then
+        echo "${GREEN}Patching mesa: rename UNUSED macro to MESA_UNUSED${NC}"
+        find "$MESA_TREE/src" "$MESA_TREE/include" -type f \
+            \( -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.h' -o -name '*.hpp' \) \
+            -exec sed -i '' 's/[[:<:]]UNUSED[[:>:]]/MESA_UNUSED/g' {} \;
+    fi
+}
+
 build_mesa_host () {
     pushd "$BUILD_DIR/mesa.git"
 
@@ -1230,6 +1254,7 @@ build_pkg_config
 build_qemu_dependencies
 build $QEMU_DIR --cross-prefix="" $QEMU_PLATFORM_BUILD_FLAGS $QEMU_DEBUG_FLAGS
 build_spice_client
+patch_mesa_host
 build_vulkan_drivers
 build_d3d_drivers
 fixup_all
