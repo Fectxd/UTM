@@ -378,6 +378,26 @@ bool jb_enable_ptrace_hack(void) {
 #endif
 }
 
+// Writes the memory-policy diagnostics to both the system log and
+// <app container>/Documents/memfix.log so it can be read on-device through the
+// Files app or Filza without a Mac/Console.app.
+static void memfix_log(NSString *message) {
+    NSLog(@"MEM: %@", message);
+    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/memfix.log"];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    if (![fm fileExistsAtPath:path]) {
+        [fm createFileAtPath:path contents:nil attributes:nil];
+    }
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (handle) {
+        [handle seekToEndOfFile];
+        NSString *entry = [NSString stringWithFormat:@"%@ %@\n",
+                           [NSDate date], message];
+        [handle writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
+        [handle closeFile];
+    }
+}
+
 bool jb_increase_memlimit(void) {
     // Ported from VirtualMacOniPad (vz/host/vmmhook.m,
     // configure_vmm_memory_policy + vz/patches/vmm.ents.xml):
@@ -395,7 +415,7 @@ bool jb_increase_memlimit(void) {
     size_t physicalSize = sizeof(physicalBytes);
     if (sysctlbyname("hw.memsize", &physicalBytes, &physicalSize, NULL, 0) != 0 ||
         physicalBytes < (1ULL << 30)) {
-        NSLog(@"MEM: jb_increase_memlimit: hw.memsize failed errno=%d", errno);
+        memfix_log([NSString stringWithFormat:@"hw.memsize failed errno=%d", errno]);
         return false;
     }
     uint64_t limitMiB = physicalBytes >> 19; // 2x physical RAM, in MiB
@@ -417,11 +437,13 @@ bool jb_increase_memlimit(void) {
     int getResult = memorystatus_control(MEMORYSTATUS_CMD_GET_MEMLIMIT_PROPERTIES,
                                          getpid(), 0, (uintptr_t)&actual, sizeof(actual));
     int getError = errno;
-    NSLog(@"MEM: jb_increase_memlimit: request=%llu MiB set=%d/%d get=%d/%d "
-          @"active=%d/0x%x inactive=%d/0x%x",
-          limitMiB, setResult, setError, getResult, getError,
-          actual.memlimit_active, actual.memlimit_active_attr,
-          actual.memlimit_inactive, actual.memlimit_inactive_attr);
+    memfix_log([NSString stringWithFormat:
+                @"hw.memsize=%llu MiB pid=%d request=%llu MiB set=%d/%d get=%d/%d "
+                @"active=%d/0x%x inactive=%d/0x%x",
+                physicalBytes >> 20, getpid(), limitMiB,
+                setResult, setError, getResult, getError,
+                actual.memlimit_active, actual.memlimit_active_attr,
+                actual.memlimit_inactive, actual.memlimit_inactive_attr]);
     return setResult == 0;
 }
 
