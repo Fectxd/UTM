@@ -126,6 +126,15 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: recursive
+      - name: Cache Sysroot
+        id: cache-sysroot
+        uses: actions/cache/restore@v4
+        with:
+          path: ./sysroot-${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}
+          key: ${{ env.STATE_CACHE_KEY }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ env.STATE_CACHE_KEY }}-
+          fail-on-cache-miss: true
       - name: Setup Xcode
         shell: bash
         run: |
