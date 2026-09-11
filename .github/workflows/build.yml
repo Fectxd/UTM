@@ -56,23 +56,39 @@ jobs:
           pip3 install --break-system-packages --user six pyparsing pyyaml setuptools distlib mako
           gem install --user-install xcpretty
           rm -f /usr/local/lib/pkgconfig/*.pc
-      - name: Fix libclc pkg-config (mesa clc needs libexecdir)
+      - name: Provide libclc pkg-config + kernels for mesa
         run: |
+          # mesa's host mesa_clc build needs a libclc pkg-config file whose
+          # libexecdir points at its spirv*-mesa3d-.spv kernels. Homebrew's
+          # libclc 23.x ships neither, so synthesise both in locations that
+          # still work under `env -i PATH=...` (Homebrew default pkg-config and
+          # a fixed directory). Our Vulkan-only iOS config never runs mesa_clc,
+          # so placeholder kernels are sufficient.
           LIBCLC_PREFIX="$(brew --prefix libclc)"
-          echo "libclc prefix: $LIBCLC_PREFIX"
-          find "$LIBCLC_PREFIX" -maxdepth 3 -type d | head -20
-          ls -la "$LIBCLC_PREFIX/share/clc" 2>/dev/null | head -20 || true
-          PC="$(find "$LIBCLC_PREFIX" -name 'libclc.pc' 2>/dev/null | head -1)"
-          echo "libclc.pc: $PC"
-          if [ -n "$PC" ]; then
-            if ! grep -q '^libexecdir=' "$PC"; then
-              CLC_DIR="$(dirname "$(find "$LIBCLC_PREFIX" \( -name 'spirv*-mesa3d-*.spv' -o -name '*.bc' \) 2>/dev/null | head -1)")"
-              case "$CLC_DIR" in ""|".") CLC_DIR="$LIBCLC_PREFIX/share/clc" ;; esac
-              echo "adding libexecdir=$CLC_DIR"
-              echo "libexecdir=$CLC_DIR" >> "$PC"
+          STAGE=/opt/homebrew/share/libclc-mesa
+          PC_DIR=/opt/homebrew/lib/pkgconfig
+          mkdir -p "$STAGE" "$PC_DIR"
+          for bits in 32 64; do
+            SRC="$LIBCLC_PREFIX/share/clc/spirv${bits}-unknown-unknown/libclc.bc"
+            OUT="$STAGE/spirv${bits}-mesa3d-.spv"
+            if [ -f "$SRC" ] && command -v llvm-spirv >/dev/null 2>&1; then
+              llvm-spirv --binary "$SRC" -o "$OUT" || cp "$SRC" "$OUT"
+            else
+              : > "$OUT"
             fi
-            echo "--- $PC"; cat "$PC"
-          fi
+          done
+          cat > "$PC_DIR/libclc.pc" <<EOF
+          prefix=$LIBCLC_PREFIX
+          libexecdir=$STAGE
+          includedir=$LIBCLC_PREFIX/include
+
+          Name: libclc
+          Description: OpenCL C library for mesa
+          Version: 23.1.0
+          EOF
+          echo "--- $PC_DIR/libclc.pc"; cat "$PC_DIR/libclc.pc"
+          ls -la "$STAGE"
+          pkg-config --variable=libexecdir libclc
       - name: Build Sysroot
         run: |
           ARGS=""
