@@ -109,10 +109,16 @@ jobs:
           name: UTM-${{ matrix.configuration.scheme }}-${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}
           path: UTM.xcarchive.tgz
   package-ios:
-    name: Package (iOS, ipa-hv)
+    name: Package (iOS: ipa-hv + deb)
     runs-on: macos-15
     needs: build-utm
     if: github.event_name == 'release' || github.event.inputs.test_release == 'true'
+    strategy:
+      matrix:
+        configuration: [
+          {mode: "ipa-hv", name: "UTM-HV.ipa", path: "UTM.ipa"},
+          {mode: "deb", name: "UTM.deb", path: "UTM.deb"},
+        ]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -122,13 +128,13 @@ jobs:
           name: UTM-iOS-ios-arm64
       - name: Install ldid + dpkg
         run: brew install ldid dpkg
-      - name: Fakesign IPA (ipa-hv)
+      - name: Fakesign / package
         run: |
           tar -xf UTM.xcarchive.tgz
-          ./scripts/package.sh ipa-hv UTM.xcarchive .
+          ./scripts/package.sh ${{ matrix.configuration.mode }} UTM.xcarchive .
       - name: Upload Artifact
         if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: UTM-HV.ipa
-          path: UTM.ipa
+          name: ${{ matrix.configuration.name }}
+          path: ${{ matrix.configuration.path }}
