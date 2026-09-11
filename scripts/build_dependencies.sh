@@ -851,20 +851,6 @@ build_moltenvk() {
     popd
 }
 
-
-# The pinned mesa commit predates LLVM >= 20 and needs three small source fixes
-# to build its host mesa_clc against modern Homebrew LLVM (see
-# patch-mesa-host.py). Applied only when the corresponding patterns exist, and
-# gated on the installed LLVM major version.
-patch_mesa_host() {
-    MESA_TREE="$BUILD_DIR/mesa.git"
-    [ -d "$MESA_TREE" ] || { echo "${RED}patch_mesa_host: mesa.git missing${NC}"; exit 1; }
-    LLVM_MAJOR="$("$(brew --prefix llvm)/bin/llvm-config" --version 2>/dev/null | cut -d. -f1)"
-    [ -n "$LLVM_MAJOR" ] || LLVM_MAJOR=0
-    echo "${GREEN}Patching mesa for LLVM $LLVM_MAJOR compatibility...${NC}"
-    python3 "$BASEDIR/patch-mesa-host.py" "$MESA_TREE" "$LLVM_MAJOR" || { echo "${RED}patch_mesa_host failed${NC}"; exit 1; }
-}
-
 build_mesa_host () {
     pushd "$BUILD_DIR/mesa.git"
 
@@ -879,8 +865,12 @@ build_mesa_host () {
 
 build_vulkan_drivers () {
     mkdir -p "$PREFIX/share/vulkan/icd.d"
-    build_mesa_host
-    meson_darwin_build $MESA_REPO -Dmesa-clc=system -Dgallium-drivers= -Dvulkan-drivers=kosmickrisp -Dplatforms=macos
+    # UTM fork note: build_mesa_host builds mesa_clc, which needs a libclc
+    # pkg-config file (libexecdir) plus spirv*-mesa3d-.spv; current Homebrew
+    # libclc ships only share/clc/<triple>/libclc.bc, and nothing on the
+    # iOS/visionOS GPU path (virgl/venus/kosmickrisp) uses mesa_clc anyway,
+    # so build the Vulkan driver with clc disabled instead of pulling libclc.
+    meson_darwin_build $MESA_REPO -Dmesa-clc=disabled -Dgallium-drivers= -Dvulkan-drivers=kosmickrisp -Dplatforms=macos
     patch_vulkan_icd "$PREFIX/share/vulkan/icd.d/kosmickrisp_mesa_icd.$ARCH.json"
     mv "$PREFIX/share/vulkan/icd.d/kosmickrisp_mesa_icd.$ARCH.json" "$PREFIX/share/vulkan/icd.d/kosmickrisp_mesa_icd.json"
     build_moltenvk
@@ -1244,7 +1234,6 @@ build_pkg_config
 build_qemu_dependencies
 build $QEMU_DIR --cross-prefix="" $QEMU_PLATFORM_BUILD_FLAGS $QEMU_DEBUG_FLAGS
 build_spice_client
-patch_mesa_host
 build_vulkan_drivers
 build_d3d_drivers
 fixup_all
