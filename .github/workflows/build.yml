@@ -1,19 +1,15 @@
 name: Build
 on:
-  push:
-    branches:
-      - '**'
-    tags-ignore:
-      - '**'
-    paths-ignore:
-      - 'LICENSE'
-      - '**.md'
   workflow_dispatch:
     inputs:
       test_release:
-        description: 'Package unsigned UTM-HV.ipa (set true)'
+        description: 'Package unsigned UTM-HV.ipa + UTM.deb (set true)'
         required: true
         default: 'false'
+
+concurrency:
+  group: ios-build
+  cancel-in-progress: false
 
 env:
   BUILD_XCODE_PATH: ${{ vars.HOST_XCODE_PATH || '/Applications/Xcode_26.0.app' }}
