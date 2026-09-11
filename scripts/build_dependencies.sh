@@ -852,16 +852,17 @@ build_moltenvk() {
 }
 
 
-# Host mesa (mesa_clc) is built with whatever Homebrew LLVM is installed.
-# The pinned mesa commit predates LLVM >= 20 (Driver::GetResourcesPath moved
-# out of clang::driver::Driver; clang headers gained an OffloadArch enumerator
-# named UNUSED that clashes with mesa's UNUSED macro). patch-mesa-host.py
-# applies the minimal fixes, idempotently.
+# The pinned mesa commit predates LLVM >= 20 and needs three small source fixes
+# to build its host mesa_clc against modern Homebrew LLVM (see
+# patch-mesa-host.py). Applied only when the corresponding patterns exist, and
+# gated on the installed LLVM major version.
 patch_mesa_host() {
     MESA_TREE="$BUILD_DIR/mesa.git"
     [ -d "$MESA_TREE" ] || { echo "${RED}patch_mesa_host: mesa.git missing${NC}"; exit 1; }
-    echo "${GREEN}Patching mesa for LLVM>=20 compatibility...${NC}"
-    python3 "$BASEDIR/patch-mesa-host.py" "$MESA_TREE" || { echo "${RED}patch_mesa_host failed${NC}"; exit 1; }
+    LLVM_MAJOR="$("$(brew --prefix llvm)/bin/llvm-config" --version 2>/dev/null | cut -d. -f1)"
+    [ -n "$LLVM_MAJOR" ] || LLVM_MAJOR=0
+    echo "${GREEN}Patching mesa for LLVM $LLVM_MAJOR compatibility...${NC}"
+    python3 "$BASEDIR/patch-mesa-host.py" "$MESA_TREE" "$LLVM_MAJOR" || { echo "${RED}patch_mesa_host failed${NC}"; exit 1; }
 }
 
 build_mesa_host () {
