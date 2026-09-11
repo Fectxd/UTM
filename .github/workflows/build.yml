@@ -109,7 +109,7 @@ jobs:
           name: UTM-${{ matrix.configuration.scheme }}-${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}
           path: UTM.xcarchive.tgz
   package-ios:
-    name: Package (iOS: ipa-hv + deb)
+    name: "Package (iOS: ipa-hv + deb)"
     runs-on: macos-15
     needs: build-utm
     if: github.event_name == 'release' || github.event.inputs.test_release == 'true'
