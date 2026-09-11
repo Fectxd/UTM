@@ -19,6 +19,12 @@
 #include <IOKit/IOKitLib.h>
 #include <unistd.h>
 
+/* Recent iPhoneOS SDKs (Xcode 26) mark IOServiceAuthorize as unavailable on
+ * iOS, so naming it below is a hard compile error. We deliberately interpose
+ * the symbol that libSystem exports on jailbroken devices, so downgrade the
+ * availability diagnostic for this file. */
+#pragma clang diagnostic ignored "-Wavailability"
+
 extern int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize);
 
 extern kern_return_t _IOServiceSetAuthorizationID(io_service_t service, uint64_t authorizationID);

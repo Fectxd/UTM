@@ -129,7 +129,9 @@ jobs:
       - name: Setup Xcode
         shell: bash
         run: |
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
           [[ "$(xcode-select -p)" == "${{ env.BUILD_XCODE_PATH }}"* ]] || sudo xcode-select -s "${{ env.BUILD_XCODE_PATH }}"
+          xcodebuild -version
       - name: Build UTM
         run: |
           ./scripts/build_utm.sh -k ${{ matrix.configuration.sdk }} -s ${{ matrix.configuration.scheme }} -a ${{ matrix.configuration.arch }} -o UTM
