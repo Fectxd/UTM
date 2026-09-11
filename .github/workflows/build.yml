@@ -15,16 +15,12 @@ env:
   BUILD_XCODE_PATH: ${{ vars.HOST_XCODE_PATH || '/Applications/Xcode_26.0.app' }}
   RUNNER_IMAGE: macos-15
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 60
-  STATE_CACHE_KEY: ios-buildstate-v3
+  STATE_CACHE_KEY: ios-buildstate-v4
 
 jobs:
-  build-sysroot:
-    name: Build Sysroot (iOS)
+  build:
+    name: Build UTM-HV (iOS, ipa + deb)
     runs-on: macos-15
-    strategy:
-      matrix:
-        arch: [arm64]
-        platform: [ios]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -33,7 +29,9 @@ jobs:
       - name: Setup Xcode
         shell: bash
         run: |
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
           [[ "$(xcode-select -p)" == "${{ env.BUILD_XCODE_PATH }}"* ]] || sudo xcode-select -s "${{ env.BUILD_XCODE_PATH }}"
+          xcodebuild -version
       - name: Restore build state (resume previous run)
         id: cache-state
         uses: actions/cache/restore@v4
@@ -61,9 +59,9 @@ jobs:
           # mesa's host mesa_clc build needs a libclc pkg-config file whose
           # libexecdir points at its spirv*-mesa3d-.spv kernels. Homebrew's
           # libclc 23.x ships neither, so synthesise both in locations that
-          # still work under `env -i PATH=...` (Homebrew default pkg-config and
-          # a fixed directory). Our Vulkan-only iOS config never runs mesa_clc,
-          # so placeholder kernels are sufficient.
+          # still resolve under the host build's `env -i PATH=...`. Our
+          # Vulkan-only iOS config never runs mesa_clc, so placeholder kernels
+          # are sufficient.
           LIBCLC_PREFIX="$(brew --prefix libclc)"
           STAGE=/opt/homebrew/share/libclc-mesa
           PC_DIR=/opt/homebrew/lib/pkgconfig
@@ -96,7 +94,7 @@ jobs:
             echo "previous successful build found -> incremental (-r)"
             ARGS="-r"
           fi
-          if ! ./scripts/build_dependencies.sh $ARGS -p ${{ matrix.platform }} -a ${{ matrix.arch }} > /tmp/sysroot-build.log 2>&1; then
+          if ! ./scripts/build_dependencies.sh $ARGS -p ios -a arm64 > /tmp/sysroot-build.log 2>&1; then
             echo "==== last 200 lines of build_dependencies.sh output ===="
             tail -200 /tmp/sysroot-build.log
             echo "===="
@@ -112,71 +110,33 @@ jobs:
             sysroot-iOS-arm64
           key: ${{ env.STATE_CACHE_KEY }}-${{ github.run_id }}
           upload-chunk-size: 1048576 # 1 MiB
-  build-utm:
-    name: Build UTM (iOS)
-    runs-on: macos-15
-    needs: build-sysroot
-    strategy:
-      matrix:
-        configuration: [
-          {arch: "arm64", sdk: "iphoneos", platform: "ios", scheme: "iOS"},
-        ]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-      - name: Cache Sysroot
-        id: cache-sysroot
-        uses: actions/cache/restore@v4
-        with:
-          path: ./sysroot-${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}
-          key: ${{ env.STATE_CACHE_KEY }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ env.STATE_CACHE_KEY }}-
-          fail-on-cache-miss: true
-      - name: Setup Xcode
-        shell: bash
+      - name: Build UTM (archive)
         run: |
-          ls -d /Applications/Xcode*.app 2>/dev/null || true
-          [[ "$(xcode-select -p)" == "${{ env.BUILD_XCODE_PATH }}"* ]] || sudo xcode-select -s "${{ env.BUILD_XCODE_PATH }}"
-          xcodebuild -version
-      - name: Build UTM
-        run: |
-          ./scripts/build_utm.sh -k ${{ matrix.configuration.sdk }} -s ${{ matrix.configuration.scheme }} -a ${{ matrix.configuration.arch }} -o UTM
+          ./scripts/build_utm.sh -k iphoneos -s iOS -a arm64 -o UTM
           tar -acf UTM.xcarchive.tgz UTM.xcarchive
-      - name: Upload UTM
+      - name: Upload UTM.xcarchive
         uses: actions/upload-artifact@v4
         with:
-          name: UTM-${{ matrix.configuration.scheme }}-${{ matrix.configuration.platform }}-${{ matrix.configuration.arch }}
+          name: UTM.xcarchive.tgz
           path: UTM.xcarchive.tgz
-  package-ios:
-    name: "Package (iOS: ipa-hv + deb)"
-    runs-on: macos-15
-    needs: build-utm
-    if: github.event_name == 'release' || github.event.inputs.test_release == 'true'
-    strategy:
-      matrix:
-        configuration: [
-          {mode: "ipa-hv", name: "UTM-HV.ipa", path: "UTM.ipa"},
-          {mode: "deb", name: "UTM.deb", path: "UTM.deb"},
-        ]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: UTM-iOS-ios-arm64
       - name: Install ldid + dpkg
+        if: github.event.inputs.test_release == 'true'
         run: brew install ldid dpkg
-      - name: Fakesign / package
-        run: |
-          tar -xf UTM.xcarchive.tgz
-          ./scripts/package.sh ${{ matrix.configuration.mode }} UTM.xcarchive .
-      - name: Upload Artifact
-        if: github.event_name != 'release'
+      - name: Package UTM-HV.ipa (ipa-hv)
+        if: github.event.inputs.test_release == 'true'
+        run: ./scripts/package.sh ipa-hv UTM.xcarchive .
+      - name: Upload UTM-HV.ipa
+        if: github.event.inputs.test_release == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.configuration.name }}
-          path: ${{ matrix.configuration.path }}
+          name: UTM-HV.ipa
+          path: UTM.ipa
+      - name: Package UTM.deb
+        if: github.event.inputs.test_release == 'true'
+        run: ./scripts/package.sh deb UTM.xcarchive .
+      - name: Upload UTM.deb
+        if: github.event.inputs.test_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UTM.deb
+          path: UTM.deb
