@@ -19,11 +19,12 @@
 #include <IOKit/IOKitLib.h>
 #include <unistd.h>
 
-/* Recent iPhoneOS SDKs (Xcode 26) mark IOServiceAuthorize as unavailable on
- * iOS, so naming it below is a hard compile error. We deliberately interpose
- * the symbol that libSystem exports on jailbroken devices, so downgrade the
- * availability diagnostic for this file. */
-#pragma clang diagnostic ignored "-Wavailability"
+/* Recent iPhoneOS SDKs (Xcode 26) declare IOServiceAuthorize as unavailable on
+ * iOS, which makes naming it a hard compile error (the availability diagnostic
+ * cannot be downgraded). We only need the symbol that libSystem exports on
+ * jailbroken devices, so reference it through an assembler label instead of the
+ * SDK declaration. */
+extern kern_return_t UTM_IOServiceAuthorize(io_service_t service, uint32_t options) __asm__("_IOServiceAuthorize");
 
 extern int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize);
 
@@ -61,5 +62,5 @@ static kern_return_t IOServiceAuthorizeReplacement(io_service_t service, uint32_
 __attribute__ ((used, section ("__DATA,__interpose")))
 static struct {
     void *replacement, *original;
-} replace_IOServiceAuthorize = { IOServiceAuthorizeReplacement, IOServiceAuthorize };
+} replace_IOServiceAuthorize = { IOServiceAuthorizeReplacement, UTM_IOServiceAuthorize };
 #endif
